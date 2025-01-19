@@ -1,0 +1,307 @@
+package viewer;
+
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.Objects;
+
+/**
+ * Standard Header of the DLT protocol
+ * Based on AUTOSAR Specification of Diagnostic Log and Trace V1.2.0 R4.0 Rev3
+ */
+public class StandardHeader {
+    // Length of the bytes data
+    public static final int DATA_MIN_LENGTH = 4;
+
+    // Bit masks to get/set values in Header Type
+    private static final byte USE_EXTENDED_HEADER_MASK = 0b00000001;
+    private static final byte MSB_FIRST_MASK = 0b00000010;
+    private static final byte WITH_ECU_ID_MASK = 0b00000100;
+    private static final byte WITH_SESSION_ID_MASK = 0b00001000;
+    private static final byte WITH_TIMESTAMP_MASK = 0b00010000;
+    private static final byte VERSION_NUMBER_MASK = (byte) 0b11100000;
+
+    private static final int VERSION_NUMBER_SHIFT = 5;
+
+    private final boolean useExtendedHeader;
+    private final boolean msbFirst;
+    private final int versionNumber;
+    private final int messageCounter;
+    private final int length;
+    private final String ecuId;
+    private final Integer sessionId;
+    private final Integer timestamp;
+
+    public StandardHeader(boolean useExtendedHeader, boolean msbFirst, int versionNumber,
+                        int messageCounter, int length, String ecuId,
+                        Integer sessionId, Integer timestamp) {
+        this.useExtendedHeader = useExtendedHeader;
+        this.msbFirst = msbFirst;
+        this.versionNumber = versionNumber;
+        this.messageCounter = messageCounter;
+        this.length = length;
+        this.ecuId = ecuId;
+        this.sessionId = sessionId;
+        this.timestamp = timestamp;
+    }
+
+    public static StandardHeader createFromBytes(byte[] data) {
+        if (data.length < DATA_MIN_LENGTH) {
+            throw new IllegalArgumentException(
+                String.format("Unexpected length of the data: %d / Standard Header must be %d or more",
+                            data.length, DATA_MIN_LENGTH));
+        }
+
+        // Get header type
+        boolean ueh = (data[0] & USE_EXTENDED_HEADER_MASK) != 0;
+        boolean msbf = (data[0] & MSB_FIRST_MASK) != 0;
+        boolean weid = (data[0] & WITH_ECU_ID_MASK) != 0;
+        boolean wsid = (data[0] & WITH_SESSION_ID_MASK) != 0;
+        boolean wtms = (data[0] & WITH_TIMESTAMP_MASK) != 0;
+        int vers = (data[0] & VERSION_NUMBER_MASK) >> VERSION_NUMBER_SHIFT;
+
+        // Validate data length
+        int expectedDataLength = DATA_MIN_LENGTH;
+        if (weid) expectedDataLength += 4;
+        if (wsid) expectedDataLength += 4;
+        if (wtms) expectedDataLength += 4;
+
+        if (data.length < expectedDataLength) {
+            throw new IllegalArgumentException(
+                String.format("Unexpected length of the data: %d / Standard Header with Header Type: " +
+                            "WEID=%b WSID=%b WTMS=%b must be %d or more",
+                            data.length, weid, wsid, wtms, expectedDataLength));
+        }
+
+        // Parse bytes
+        ByteBuffer buffer = ByteBuffer.wrap(data);
+        buffer.get(); // Skip header type byte
+        int mcnt = buffer.get() & 0xFF;
+        int length = buffer.getShort() & 0xFFFF;
+        
+        String ecu = null;
+        Integer seid = null;
+        Integer tmsp = null;
+
+        if (weid) {
+            byte[] ecuBytes = new byte[4];
+            buffer.get(ecuBytes);
+            ecu = asciiDecode(ecuBytes);
+        }
+        if (wsid) {
+            seid = buffer.getInt();
+        }
+        if (wtms) {
+            tmsp = buffer.getInt();
+        }
+
+        return new StandardHeader(ueh, msbf, vers, mcnt, length, ecu, seid, tmsp);
+    }
+
+    public byte[] toBytes() {
+        ByteBuffer buffer = ByteBuffer.allocate(getBytesLength());
+        buffer.put((byte) getHeaderType());
+        buffer.put((byte) messageCounter);
+        buffer.putShort((short) length);
+
+        if (hasEcuId()) {
+            buffer.put(asciiEncode(ecuId, 4));
+        }
+        if (hasSessionId()) {
+            buffer.putInt(sessionId);
+        }
+        if (hasTimestamp()) {
+            buffer.putInt(timestamp);
+        }
+
+        return buffer.array();
+    }
+
+    public int getBytesLength() {
+        int length = DATA_MIN_LENGTH;
+        if (hasEcuId()) length += 4;
+        if (hasSessionId()) length += 4;
+        if (hasTimestamp()) length += 4;
+        return length;
+    }
+
+    public int getHeaderType() {
+        int htyp = versionNumber << VERSION_NUMBER_SHIFT;
+        if (useExtendedHeader) htyp |= USE_EXTENDED_HEADER_MASK;
+        if (msbFirst) htyp |= MSB_FIRST_MASK;
+        if (hasEcuId()) htyp |= WITH_ECU_ID_MASK;
+        if (hasSessionId()) htyp |= WITH_SESSION_ID_MASK;
+        if (hasTimestamp()) htyp |= WITH_TIMESTAMP_MASK;
+        return htyp;
+    }
+
+    private boolean hasEcuId() {
+        return ecuId != null;
+    }
+
+    private boolean hasSessionId() {
+        return sessionId != null;
+    }
+
+    private boolean hasTimestamp() {
+        return timestamp != null;
+    }
+
+    static String asciiDecode(byte[] ascii) {
+        String str = new String(ascii, StandardCharsets.US_ASCII);
+        return str.replace("\0", "");
+    }
+
+    static byte[] asciiEncode(String str, int length) {
+        byte[] result = new byte[length];
+        byte[] encoded = str.getBytes(StandardCharsets.US_ASCII);
+        System.arraycopy(encoded, 0, result, 0, Math.min(encoded.length, length));
+        return result;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        StandardHeader that = (StandardHeader) o;
+        return useExtendedHeader == that.useExtendedHeader &&
+               msbFirst == that.msbFirst &&
+               versionNumber == that.versionNumber &&
+               messageCounter == that.messageCounter &&
+               length == that.length &&
+               Objects.equals(ecuId, that.ecuId) &&
+               Objects.equals(sessionId, that.sessionId) &&
+               Objects.equals(timestamp, that.timestamp);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(useExtendedHeader, msbFirst, versionNumber,
+                          messageCounter, length, ecuId, sessionId, timestamp);
+    }
+
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder("StandardHeader(");
+        sb.append("useExtendedHeader=").append(useExtendedHeader)
+          .append(", msbFirst=").append(msbFirst)
+          .append(", versionNumber=").append(versionNumber)
+          .append(", messageCounter=").append(messageCounter)
+          .append(", length=").append(length);
+        
+        if (ecuId != null) {
+            sb.append(", ecuId=\"").append(ecuId).append("\"");
+        }
+        if (sessionId != null) {
+            sb.append(", sessionId=").append(sessionId);
+        }
+        if (timestamp != null) {
+            sb.append(", timestamp=").append(timestamp);
+        }
+        sb.append(")");
+        return sb.toString();
+    }
+}
+
+/**
+ * Message type enums for DLT Extended Header
+ */
+public enum MessageType {
+    DLT_TYPE_LOG(0x0),
+    DLT_TYPE_APP_TRACE(0x1),
+    DLT_TYPE_NW_TRACE(0x2),
+    DLT_TYPE_CONTROL(0x3);
+
+    private final int value;
+
+    MessageType(int value) {
+        this.value = value;
+    }
+
+    public int getValue() {
+        return value;
+    }
+}
+
+public enum MessageLogInfo {
+    DLT_LOG_FATAL(0x1),
+    DLT_LOG_ERROR(0x2),
+    DLT_LOG_WARN(0x3),
+    DLT_LOG_INFO(0x4),
+    DLT_LOG_DEBUG(0x5),
+    DLT_LOG_VERBOSE(0x6);
+
+    private final int value;
+
+    MessageLogInfo(int value) {
+        this.value = value;
+    }
+
+    public int getValue() {
+        return value;
+    }
+}
+
+/**
+ * Extended Header of the DLT protocol
+ */
+
+/**
+ * Storage Header of the DLT protocol
+ */
+public class StorageHeader {
+    public static final int DATA_LENGTH = 16;
+    private static final byte[] DLT_PATTERN = {0x44, 0x4c, 0x54, 0x01}; // "DLT"+0x01
+
+    private final int seconds;
+    private final int microseconds;
+    private final String ecuId;
+
+    public StorageHeader(int seconds, int microseconds, String ecuId) {
+        this.seconds = seconds;
+        this.microseconds = microseconds;
+        this.ecuId = ecuId;
+    }
+
+    public static StorageHeader createFromBytes(byte[] data) {
+        if (data.length < DATA_LENGTH) {
+            throw new IllegalArgumentException(
+                String.format("Unexpected length of the data: %d / Storage Header must be %d or more",
+                            data.length, DATA_LENGTH));
+        }
+
+        byte[] pattern = Arrays.copyOfRange(data, 0, 4);
+        if (!Arrays.equals(pattern, DLT_PATTERN)) {
+            throw new IllegalArgumentException(
+                "DLT-Pattern is not found in the data / Beginning of Storage Header must be DLT+0x01");
+        }
+
+        ByteBuffer buffer = ByteBuffer.wrap(data, 4, data.length - 4);
+        buffer.order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        
+        int seconds = buffer.getInt();
+        int microseconds = buffer.getInt();
+        
+        byte[] ecuBytes = new byte[4];
+        buffer.get(ecuBytes);
+        String ecuId = StandardHeader.asciiDecode(ecuBytes);
+
+        return new StorageHeader(seconds, microseconds, ecuId);
+    }
+
+    public byte[] toBytes() {
+        ByteBuffer buffer = ByteBuffer.allocate(DATA_LENGTH);
+        buffer.order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        
+        buffer.put(DLT_PATTERN);
+        buffer.putInt(seconds);
+        buffer.putInt(microseconds);
+        buffer.put(StandardHeader.asciiEncode(ecuId, 4));
+        
+        return buffer.array();
+    }
+
+    public int getBytesLength() {
+        return DATA_LENGTH;
+    }
+}

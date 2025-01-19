@@ -1,0 +1,105 @@
+package viewer;
+
+import java.io.BufferedReader;
+import java.io.File;           // Import java.io.File
+import java.io.FileInputStream;
+import java.io.FileReader;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+
+public class Viewer {
+
+	public static void main(String[] args) {
+		 // Path to the DLT file
+        String filePath = "C:\\Users\\ahmed\\Downloads\\delulu.dlt";
+        
+        try (FileInputStream fis = new FileInputStream(filePath)) {
+            byte[] buffer = new byte[16]; // Read in 16 bytes for the Base Header initially
+            while (fis.read(buffer) != -1) {
+                parseBaseHeader(buffer);
+            }
+        } catch (IOException e) {
+            System.err.println("Error reading DLT file: " + e.getMessage());
+        }
+    }
+
+    private static void parseBaseHeader(byte[] data) {
+        if (data.length < 4) {
+            System.out.println("Insufficient data for Base Header");
+            return;
+        }
+
+        ByteBuffer buffer = ByteBuffer.wrap(data);
+        buffer.order(ByteOrder.BIG_ENDIAN);
+        
+        int header = buffer.getInt();
+        byte counter = buffer.get();
+        
+        // Header Type (4 bytes, big-endian)
+        int headerType = ((data[0] & 0xFF) << 24) | ((data[1] & 0xFF) << 16) |
+                         ((data[2] & 0xFF) << 8) | (data[3] & 0xFF);
+
+        // Parse Header Flags (Bits inside headerType)
+        int version = (headerType >> 5) & 0x07; // Bits 5-7 for version
+        int verboseMode = headerType & 0x03; // Bits 0-1 for content type
+        boolean hasECUId = ((headerType >> 2) & 0x01) == 1; // Bit 2
+        boolean hasAppContextId = ((headerType >> 3) & 0x01) == 1; // Bit 3
+
+        System.out.printf("Header Type: 0x%08X%n", headerType);
+        System.out.printf("Version: %d%n", version);
+        System.out.printf("Verbose Mode: %s%n", decodeVerboseMode(verboseMode));
+        System.out.println("Has ECU ID: " + hasECUId);
+        System.out.println("Has App Context ID: " + hasAppContextId);
+
+        // Message Counter (1 byte)
+        int messageCounter = data[4] & 0xFF;
+        System.out.println("Message Counter: " + messageCounter);
+
+        // Message Length (2 bytes, big-endian)
+        int messageLength = ((data[5] & 0xFF) << 8) | (data[6] & 0xFF);
+        System.out.println("Message Length: " + messageLength);
+
+        // Conditional Fields
+        int offset = 7; // Next available byte index
+        if (verboseMode == 0 || verboseMode == 2) { // Verbose or Control Message
+            int messageInfo = data[offset] & 0xFF;
+            int numberOfArguments = data[offset + 1] & 0xFF;
+            System.out.printf("Message Info: 0x%02X%n", messageInfo);
+            System.out.println("Number of Arguments: " + numberOfArguments);
+            offset += 2;
+        }
+
+        // Additional conditional fields (Timestamp, Message ID) parsing can be added here.
+        System.out.println("Base Header parsing completed.");
+    }
+
+    private static String decodeVerboseMode(int mode) {
+        return switch (mode) {
+            case 0x0 -> "Verbose Mode Data Message";
+            case 0x1 -> "Non-Verbose Mode Data Message";
+            case 0x2 -> "Control Message";
+            default -> "Reserved";
+        };
+    }
+    
+
+    private static void parseDLTMessage(byte[] data) {
+        // Parse the Base Header (first 4 bytes are Header Type)
+        int headerType = (data[0] & 0xFF);
+        int messageCounter = (data[1] & 0xFF);
+        int messageLength = ((data[2] & 0xFF) << 8) | (data[3] & 0xFF); // Big-endian
+
+        System.out.printf("Header Type: 0x%02X, Message Counter: %d, Message Length: %d%n",
+                          headerType, messageCounter, messageLength);
+
+        // Example: Parse Message Info if applicable
+        if (data.length > 5) {
+            int messageInfo = data[4] & 0xFF; // Example, can include more fields
+            System.out.printf("Message Info: 0x%02X%n", messageInfo);
+        }
+
+        // Further parsing based on Message Type, Payload, or Extension Header
+        // Implement logic based on the specific structure and fields in the document
+    }
+}

@@ -1,0 +1,70 @@
+package viewer;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+
+public class StorageHeader {
+
+    // Constants
+    public static final int DATA_LENGTH = 16; // Fixed length of the Storage Header
+    private static final byte[] DLT_PATTERN = {0x44, 0x4C, 0x54, 0x01}; // "DLT\x01"
+
+    // Fields
+    private final int seconds;
+    private final int microseconds;
+    private final String ecuId;
+
+    public StorageHeader(int seconds, int microseconds, String ecuId) {
+        this.seconds = seconds;
+        this.microseconds = microseconds;
+        this.ecuId = ecuId;
+    }
+
+    public static StorageHeader createFromBytes(byte[] data) {
+        if (data.length < DATA_LENGTH) {
+            throw new IllegalArgumentException(
+                "Data length must be at least " + DATA_LENGTH
+            );
+        }
+
+        // Check DLT pattern
+        byte[] pattern = new byte[4];
+        System.arraycopy(data, 0, pattern, 0, 4);
+        if (!ByteBuffer.wrap(pattern).equals(ByteBuffer.wrap(DLT_PATTERN))) {
+            throw new IllegalArgumentException("Invalid DLT pattern in Storage Header");
+        }
+
+        ByteBuffer buffer = ByteBuffer.wrap(data, 4, DATA_LENGTH - 4).order(ByteOrder.LITTLE_ENDIAN);
+
+        int seconds = buffer.getInt();
+        int microseconds = buffer.getInt();
+
+        byte[] ecuIdBytes = new byte[4];
+        buffer.get(ecuIdBytes);
+        String ecuId = new String(ecuIdBytes).trim();
+
+        return new StorageHeader(seconds, microseconds, ecuId);
+    }
+
+    public byte[] toBytes() {
+        ByteBuffer buffer = ByteBuffer.allocate(DATA_LENGTH).order(ByteOrder.LITTLE_ENDIAN);
+
+        // Add DLT pattern
+        buffer.put(DLT_PATTERN);
+
+        // Add the fields
+        buffer.putInt(seconds);
+        buffer.putInt(microseconds);
+        buffer.put(ecuId.getBytes());
+
+        return buffer.array();
+    }
+
+    @Override
+    public String toString() {
+        return "StorageHeader{" +
+               "seconds=" + seconds +
+               ", microseconds=" + microseconds +
+               ", ecuId='" + ecuId + '\'' +
+               '}';
+    }
+}

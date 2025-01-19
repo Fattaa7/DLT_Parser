@@ -1,0 +1,339 @@
+package viewer;
+
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.util.Optional;
+
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.util.Optional;
+
+public class StandardHeader {
+
+    // length of the bytes data
+    public static final int DATA_MIN_LENGTH = 4;
+
+    // bit masks to get/set values in Header Type
+    public static final int USE_EXTENDED_HEADER_MASK = 0b00000001;
+    public static final int MSB_FIRST_MASK = 0b00000010;
+    public static final int WITH_ECU_ID_MASK = 0b00000100;
+    public static final int WITH_SESSION_ID_MASK = 0b00001000;
+    public static final int WITH_TIMESTAMP_MASK = 0b00010000;
+    public static final int VERSION_NUMBER_MASK = 0b11100000;
+
+    private static final int VERSION_NUMBER_SHIFT = 5;
+
+    private static final String STRUCT_MIN_FORMAT = ">BBH";
+
+     boolean useExtendedHeader;
+     boolean msbFirst;
+     int versionNumber;
+    int messageCounter;
+    private int length;
+    String ecuId;
+     Integer sessionId;
+     Integer timestamp;
+
+    public StandardHeader(
+            boolean useExtendedHeader,
+            boolean msbFirst,
+            int versionNumber,
+            int messageCounter,
+            int length,
+            Optional<String> ecuId,
+            Optional<Integer> sessionId,
+            Optional<Integer> timestamp) {
+        this.useExtendedHeader = useExtendedHeader;
+        this.msbFirst = msbFirst;
+        this.versionNumber = versionNumber;
+        this.messageCounter = messageCounter;
+        this.length = length;
+        this.ecuId = ecuId.orElse(null);
+        this.sessionId = sessionId.orElse(null);
+        this.timestamp = timestamp.orElse(null);
+    }
+
+    @Override
+    public String toString() {
+        StringBuilder val = new StringBuilder(
+                String.format("StandardHeader(useExtendedHeader=%b, msbFirst=%b, versionNumber=%d, messageCounter=%d, length=%d", 
+                        useExtendedHeader, msbFirst, versionNumber, messageCounter, length));
+        if (ecuId != null) {
+            val.append(String.format(", ecuId=\"%s\"", ecuId));
+        }
+        if (sessionId != null) {
+            val.append(String.format(", sessionId=%d", sessionId));
+        }
+        if (timestamp != null) {
+            val.append(String.format(", timestamp=%d", timestamp));
+        }
+        val.append(")");
+        return val.toString();
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj) return true;
+        if (obj == null || getClass() != obj.getClass()) return false;
+        StandardHeader other = (StandardHeader) obj;
+        return useExtendedHeader == other.useExtendedHeader && msbFirst == other.msbFirst && 
+                versionNumber == other.versionNumber && messageCounter == other.messageCounter &&
+                length == other.length && 
+                (ecuId == null ? other.ecuId == null : ecuId.equals(other.ecuId)) &&
+                (sessionId == null ? other.sessionId == null : sessionId.equals(other.sessionId)) && 
+                (timestamp == null ? other.timestamp == null : timestamp.equals(other.timestamp));
+    }
+
+    public static StandardHeader createFromBytes(byte[] data) throws IllegalArgumentException {
+        int dataLength = data.length;
+        if (dataLength < DATA_MIN_LENGTH) {
+            throw new IllegalArgumentException("Unexpected length of the data: " + dataLength + " / " + 
+                    "Standard Header must be " + DATA_MIN_LENGTH + " or more.");
+        }
+
+        byte firstByte = data[0];
+        boolean ueh = (firstByte & USE_EXTENDED_HEADER_MASK) != 0;
+        boolean msbf = (firstByte & MSB_FIRST_MASK) != 0;
+        boolean weid = (firstByte & WITH_ECU_ID_MASK) != 0;
+        boolean wsid = (firstByte & WITH_SESSION_ID_MASK) != 0;
+        boolean wtms = (firstByte & WITH_TIMESTAMP_MASK) != 0;
+        int vers = (firstByte & VERSION_NUMBER_MASK) >> VERSION_NUMBER_SHIFT;
+
+        int expectedDataLength = DATA_MIN_LENGTH;
+        StringBuilder unpackFormat = new StringBuilder(STRUCT_MIN_FORMAT);
+
+        if (weid) {
+            expectedDataLength += 4;
+            unpackFormat.append("4s");
+        }
+        if (wsid) {
+            expectedDataLength += 4;
+            unpackFormat.append("I");
+        }
+        if (wtms) {
+            expectedDataLength += 4;
+            unpackFormat.append("I");
+        }
+
+        if (dataLength < expectedDataLength) {
+            throw new IllegalArgumentException("Unexpected length of the data: " + dataLength + " / " +
+                    "Standard Header with Header Type: WEID=" + weid + " WSID=" + wsid + " WTMS=" + wtms +
+                    " must be " + expectedDataLength + " or more.");
+        }
+
+        ByteBuffer buffer = ByteBuffer.wrap(data);
+        buffer.order(msbf ? java.nio.ByteOrder.BIG_ENDIAN : java.nio.ByteOrder.LITTLE_ENDIAN);
+
+        byte[] structBytes = new byte[expectedDataLength];
+        buffer.get(structBytes);
+
+        int messageCounter = ByteBuffer.wrap(structBytes, 1, 2).getShort();
+        int length = ByteBuffer.wrap(structBytes, 3, 2).getShort();
+
+        String ecu = null;
+        Integer sessionId = null;
+        Integer timestamp = null;
+
+        if (weid) {
+            byte[] ecuBytes = new byte[4];
+            buffer.get(ecuBytes);
+            ecu = new String(ecuBytes, StandardCharsets.US_ASCII);
+        }
+
+        if (wsid) {
+            sessionId = buffer.getInt();
+        }
+
+        if (wtms) {
+            timestamp = buffer.getInt();
+        }
+
+        return new StandardHeader(ueh, msbf, vers, messageCounter, length, Optional.ofNullable(ecu), Optional.ofNullable(sessionId), Optional.ofNullable(timestamp));
+    }
+
+    public byte[] toBytes() {
+        int totalLength = bytesLength();
+        ByteBuffer buffer = ByteBuffer.allocate(totalLength);
+        buffer.put((byte) headerType());
+
+        buffer.putShort((short) messageCounter);
+        buffer.putShort((short) length);
+
+        if (ecuId != null) {
+            buffer.put(ecuId.getBytes(StandardCharsets.US_ASCII));
+        }
+        if (sessionId != null) {
+            buffer.putInt(sessionId);
+        }
+        if (timestamp != null) {
+            buffer.putInt(timestamp);
+        }
+
+        return buffer.array();
+    }
+
+    public int bytesLength() {
+        int length = DATA_MIN_LENGTH;
+        if (ecuId != null) {
+            length += 4;
+        }
+        if (sessionId != null) {
+            length += 4;
+        }
+        if (timestamp != null) {
+            length += 4;
+        }
+        return length;
+    }
+
+    public int headerType() {
+        int headerType = versionNumber << VERSION_NUMBER_SHIFT;
+        if (useExtendedHeader) headerType |= USE_EXTENDED_HEADER_MASK;
+        if (msbFirst) headerType |= MSB_FIRST_MASK;
+        if (withEcuId()) headerType |= WITH_ECU_ID_MASK;
+        if (withSessionId()) headerType |= WITH_SESSION_ID_MASK;
+        if (withTimestamp()) headerType |= WITH_TIMESTAMP_MASK;
+        return headerType;
+    }
+
+    public boolean withEcuId() {
+        return ecuId != null;
+    }
+
+    public boolean withSessionId() {
+        return sessionId != null;
+    }
+
+    public boolean withTimestamp() {
+        return timestamp != null;
+    }
+
+    public interface MessageTypeInfo {}
+
+    // Enum for MessageType
+    public enum MessageType implements MessageTypeInfo {
+        DLT_TYPE_LOG(0x0),
+        DLT_TYPE_APP_TRACE(0x1),
+        DLT_TYPE_NW_TRACE(0x2),
+        DLT_TYPE_CONTROL(0x3);
+
+        private final int value;
+
+        MessageType(int value) {
+            this.value = value;
+        }
+
+        public int getValue() {
+            return value;
+        }
+    }
+
+    // Define the enums for Log Info, Trace Info, Bus Info, and Control Info
+    public enum MessageLogInfo implements MessageTypeInfo {
+        DLT_LOG_FATAL(0x1),
+        DLT_LOG_ERROR(0x2),
+        DLT_LOG_WARN(0x3),
+        DLT_LOG_INFO(0x4),
+        DLT_LOG_DEBUG(0x5),
+        DLT_LOG_VERBOSE(0x6);
+
+        private final int value;
+
+        MessageLogInfo(int value) {
+            this.value = value;
+        }
+
+        static MessageLogInfo get(int value) {
+            for (MessageLogInfo info : MessageLogInfo.values()) {
+                if (info.getValue() == value) {
+                    return info;
+                }
+            }
+            throw new IllegalArgumentException("Invalid value for MessageLogInfo: " + value);
+        }
+
+        
+        public int getValue() {
+            return value;
+        }
+    }
+
+    public enum MessageTraceInfo implements MessageTypeInfo {
+        DLT_TRACE_VARIABLE(0x1),
+        DLT_TRACE_FUNCTION_IN(0x2),
+        DLT_TRACE_FUNCTION_OUT(0x3),
+        DLT_TRACE_STATE(0x4),
+        DLT_TRACE_VFB(0x5);
+
+        private final int value;
+
+        MessageTraceInfo(int value) {
+            this.value = value;
+        }
+        
+        static MessageTraceInfo get(int value) {
+            for (MessageTraceInfo info : MessageTraceInfo.values()) {
+                if (info.getValue() == value) {
+                    return info;
+                }
+            }
+            throw new IllegalArgumentException("Invalid value for MessageTraceInfo: " + value);
+        }
+
+
+        public int getValue() {
+            return value;
+        }
+    }
+
+    public enum MessageBusInfo implements MessageTypeInfo {
+        DLT_NW_TRACE_IPC(0x1),
+        DLT_NW_TRACE_CAN(0x2),
+        DLT_NW_TRACE_FLEXRAY(0x3),
+        DLT_NW_TRACE_MOST(0x4);
+
+        private final int value;
+
+        MessageBusInfo(int value) {
+            this.value = value;
+        }
+        
+        static MessageBusInfo get(int value) {
+            for (MessageBusInfo info : MessageBusInfo.values()) {
+                if (info.getValue() == value) {
+                    return info;
+                }
+            }
+            throw new IllegalArgumentException("Invalid value for MessageBusInfo: " + value);
+        }
+
+        public int getValue() {
+            return value;
+        }
+    }
+
+    public enum MessageControlInfo implements MessageTypeInfo {
+        DLT_CONTROL_REQUEST(0x1),
+        DLT_CONTROL_RESPONSE(0x2),
+        DLT_CONTROL_TIME(0x3);
+
+        private final int value;
+
+        MessageControlInfo(int value) {
+            this.value = value;
+        }
+        
+        static MessageControlInfo get(int value) {
+            for (MessageControlInfo info : MessageControlInfo.values()) {
+                if (info.getValue() == value) {
+                    return info;
+                }
+            }
+            throw new IllegalArgumentException("Invalid value for MessageControlInfo: " + value);
+        }
+
+        public int getValue() {
+            return value;
+        }
+    }
+}

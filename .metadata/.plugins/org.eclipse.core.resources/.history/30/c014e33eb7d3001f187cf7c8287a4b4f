@@ -1,0 +1,138 @@
+package viewer;
+
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.util.Optional;
+
+public class StandardHeader {
+    // Constants for header parsing
+    public static final int DATA_MIN_LENGTH = 4; // Minimum header length
+
+    // Bit masks
+    private static final int USE_EXTENDED_HEADER_MASK = 0b00000001;
+    private static final int MSB_FIRST_MASK = 0b00000010;
+    private static final int WITH_ECU_ID_MASK = 0b00000100;
+    private static final int WITH_SESSION_ID_MASK = 0b00001000;
+    private static final int WITH_TIMESTAMP_MASK = 0b00010000;
+    private static final int VERSION_NUMBER_MASK = 0b11100000;
+
+    private static final int VERSION_NUMBER_SHIFT = 5;
+
+    // Header fields
+    private final boolean useExtendedHeader;
+    private final boolean msbFirst;
+    private final int versionNumber;
+    private final int messageCounter;
+    private final int length;
+    private final Optional<String> ecuId;
+    private final Optional<Integer> sessionId;
+    private final Optional<Integer> timestamp;
+
+    public StandardHeader(
+        boolean useExtendedHeader,
+        boolean msbFirst,
+        int versionNumber,
+        int messageCounter,
+        int length,
+        Optional<String> ecuId,
+        Optional<Integer> sessionId,
+        Optional<Integer> timestamp
+    ) {
+        this.useExtendedHeader = useExtendedHeader;
+        this.msbFirst = msbFirst;
+        this.versionNumber = versionNumber;
+        this.messageCounter = messageCounter;
+        this.length = length;
+        this.ecuId = ecuId;
+        this.sessionId = sessionId;
+        this.timestamp = timestamp;
+    }
+
+    public static StandardHeader createFromBytes(byte[] data) {
+        if (data.length < DATA_MIN_LENGTH) {
+            throw new IllegalArgumentException(
+                "Data length must be at least " + DATA_MIN_LENGTH
+            );
+        }
+
+        ByteBuffer buffer = ByteBuffer.wrap(data).order(ByteOrder.BIG_ENDIAN);
+
+        // Extract Header Type
+        byte headerType = buffer.get();
+        boolean useExtendedHeader = (headerType & USE_EXTENDED_HEADER_MASK) != 0;
+        boolean msbFirst = (headerType & MSB_FIRST_MASK) != 0;
+        boolean withEcuId = (headerType & WITH_ECU_ID_MASK) != 0;
+        boolean withSessionId = (headerType & WITH_SESSION_ID_MASK) != 0;
+        boolean withTimestamp = (headerType & WITH_TIMESTAMP_MASK) != 0;
+        int versionNumber = (headerType & VERSION_NUMBER_MASK) >> VERSION_NUMBER_SHIFT;
+
+        // Extract remaining fields
+        int messageCounter = Byte.toUnsignedInt(buffer.get());
+        int length = Short.toUnsignedInt(buffer.getShort());
+
+        Optional<String> ecuId = Optional.empty();
+        if (withEcuId) {
+            byte[] ecuIdBytes = new byte[4];
+            buffer.get(ecuIdBytes);
+            ecuId = Optional.of(new String(ecuIdBytes).trim());
+        }
+
+        Optional<Integer> sessionId = Optional.empty();
+        if (withSessionId) {
+            sessionId = Optional.of(buffer.getInt());
+        }
+
+        Optional<Integer> timestamp = Optional.empty();
+        if (withTimestamp) {
+            timestamp = Optional.of(buffer.getInt());
+        }
+
+        return new StandardHeader(
+            useExtendedHeader, msbFirst, versionNumber, messageCounter, length, ecuId, sessionId, timestamp
+        );
+    }
+
+    public byte[] toBytes() {
+        ByteBuffer buffer = ByteBuffer.allocate(getBytesLength()).order(ByteOrder.BIG_ENDIAN);
+
+        // Construct header type
+        int headerType = (versionNumber << VERSION_NUMBER_SHIFT);
+        if (useExtendedHeader) headerType |= USE_EXTENDED_HEADER_MASK;
+        if (msbFirst) headerType |= MSB_FIRST_MASK;
+        if (ecuId.isPresent()) headerType |= WITH_ECU_ID_MASK;
+        if (sessionId.isPresent()) headerType |= WITH_SESSION_ID_MASK;
+        if (timestamp.isPresent()) headerType |= WITH_TIMESTAMP_MASK;
+
+        buffer.put((byte) headerType);
+        buffer.put((byte) messageCounter);
+        buffer.putShort((short) length);
+
+        ecuId.ifPresent(id -> buffer.put(id.getBytes()));
+        sessionId.ifPresent(buffer::putInt);
+        timestamp.ifPresent(buffer::putInt);
+
+        return buffer.array();
+    }
+
+    public int getBytesLength() {
+        int length = DATA_MIN_LENGTH;
+        if (ecuId.isPresent()) length += 4;
+        if (sessionId.isPresent()) length += 4;
+        if (timestamp.isPresent()) length += 4;
+        return length;
+    }
+
+    @Override
+    public String toString() {
+        return "StandardHeader{" +
+               "useExtendedHeader=" + useExtendedHeader +
+               ", msbFirst=" + msbFirst +
+               ", versionNumber=" + versionNumber +
+               ", messageCounter=" + messageCounter +
+               ", length=" + length +
+               ", ecuId=" + ecuId +
+               ", sessionId=" + sessionId +
+               ", timestamp=" + timestamp +
+               '}';
+    }
+}

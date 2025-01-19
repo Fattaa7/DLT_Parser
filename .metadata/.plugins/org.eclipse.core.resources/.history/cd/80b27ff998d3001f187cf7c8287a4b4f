@@ -1,0 +1,43 @@
+package viewer;
+
+import java.io.BufferedReader;
+import java.io.File;           // Import java.io.File
+import java.io.FileInputStream;
+import java.io.FileReader;
+import java.io.IOException;
+
+public class Viewer {
+
+	public static void main(String[] args) {
+		 // Path to the DLT file
+        String filePath = "C:\\Users\\ahmed\\Downloads\\delulu.dlt";
+        
+        try (FileInputStream fis = new FileInputStream(filePath)) {
+            byte[] buffer = new byte[16]; // Read chunks of data
+            while (fis.read(buffer) != -1) {
+                parseDLTMessage(buffer);
+            }
+        } catch (IOException e) {
+            System.err.println("Error reading DLT file: " + e.getMessage());
+        }
+    }
+
+    private static void parseDLTMessage(byte[] data) {
+        // Parse the Base Header (first 4 bytes are Header Type)
+        int headerType = (data[0] & 0xFF);
+        int messageCounter = (data[1] & 0xFF);
+        int messageLength = ((data[2] & 0xFF) << 8) | (data[3] & 0xFF); // Big-endian
+
+        System.out.printf("Header Type: 0x%02X, Message Counter: %d, Message Length: %d%n",
+                          headerType, messageCounter, messageLength);
+
+        // Example: Parse Message Info if applicable
+        if (data.length > 5) {
+            int messageInfo = data[4] & 0xFF; // Example, can include more fields
+            System.out.printf("Message Info: 0x%02X%n", messageInfo);
+        }
+
+        // Further parsing based on Message Type, Payload, or Extension Header
+        // Implement logic based on the specific structure and fields in the document
+    }
+}

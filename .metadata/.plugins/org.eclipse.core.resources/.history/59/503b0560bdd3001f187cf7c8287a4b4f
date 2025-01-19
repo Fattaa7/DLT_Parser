@@ -1,0 +1,395 @@
+package viewer;
+
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
+
+/**
+ * Default value of endian of the payload data.
+ * The value will be used when casting the object to bytes,
+ * if endian is not set by argument and field value of endian type is not defined.
+ */
+class DltConstants {
+    public static final Boolean MSB_FIRST_DEFAULT = false;
+}
+
+/**
+ * The Payload of a DLT Message.
+ */
+abstract class Payload {
+    public abstract byte[] toBytes(Boolean msbFirst);
+    public abstract int getBytesLength();
+    protected abstract String toStr();
+
+    @Override
+    public String toString() {
+        return toStr();
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (obj instanceof Payload) {
+            return Arrays.equals(toBytes(false), ((Payload) obj).toBytes(false));
+        }
+        return false;
+    }
+}
+
+/**
+ * The Payload of Non-Verbose Mode of a DLT Message.
+ */
+class NonVerbosePayload extends Payload {
+    private static final int MESSAGE_ID_LENGTH = 4;
+    private final int messageId;
+    private final byte[] nonStaticData;
+    private final Boolean msbFirst;
+
+    public NonVerbosePayload(int messageId, byte[] nonStaticData, Boolean msbFirst) {
+        this.messageId = messageId;
+        this.nonStaticData = nonStaticData;
+        this.msbFirst = msbFirst;
+    }
+
+    public static NonVerbosePayload createFromBytes(byte[] data, boolean msbFirst) {
+        if (data.length < MESSAGE_ID_LENGTH) {
+            throw new IllegalArgumentException(
+                String.format("Unexpected length of the data: %d / Payload of Non-Verbose Mode must not be < %d",
+                    data.length, MESSAGE_ID_LENGTH));
+        }
+
+        ByteBuffer buffer = ByteBuffer.wrap(data, 0, 4)
+            .order(msbFirst ? ByteOrder.BIG_ENDIAN : ByteOrder.LITTLE_ENDIAN);
+        int messageId = buffer.getInt();
+        byte[] nonStaticData = Arrays.copyOfRange(data, 4, data.length);
+
+        return new NonVerbosePayload(messageId, nonStaticData, msbFirst);
+    }
+
+    @Override
+    public byte[] toBytes(Boolean msbFirst) {
+        ByteOrder order;
+        if (msbFirst != null) {
+            order = msbFirst ? ByteOrder.BIG_ENDIAN : ByteOrder.LITTLE_ENDIAN;
+        } else if (this.msbFirst != null) {
+            order = this.msbFirst ? ByteOrder.BIG_ENDIAN : ByteOrder.LITTLE_ENDIAN;
+        } else if (DltConstants.MSB_FIRST_DEFAULT != null) {
+            order = DltConstants.MSB_FIRST_DEFAULT ? ByteOrder.BIG_ENDIAN : ByteOrder.LITTLE_ENDIAN;
+        } else {
+            throw new IllegalStateException("Endian is not known");
+        }
+
+        ByteBuffer buffer = ByteBuffer.allocate(MESSAGE_ID_LENGTH + nonStaticData.length)
+            .order(order);
+        buffer.putInt(messageId);
+        buffer.put(nonStaticData);
+        return buffer.array();
+    }
+
+    @Override
+    public int getBytesLength() {
+        return MESSAGE_ID_LENGTH + nonStaticData.length;
+    }
+
+    @Override
+    protected String toStr() {
+        StringBuilder hex = new StringBuilder();
+        for (byte b : nonStaticData) {
+            hex.append(String.format("%02x", b));
+        }
+        return String.format("[%d] %s", messageId, hex.toString());
+    }
+}
+
+/**
+ * Type Info for Arguments in Verbose Mode Payload
+ */
+class TypeInfo {
+    // Type Length
+    public static final int TYPE_LENGTH_8BIT = 0x00000001;
+    public static final int TYPE_LENGTH_16BIT = 0x00000002;
+    public static final int TYPE_LENGTH_32BIT = 0x00000003;
+    public static final int TYPE_LENGTH_64BIT = 0x00000004;
+    public static final int TYPE_LENGTH_128BIT = 0x00000005;
+    
+    // Base Types
+    public static final int TYPE_BOOL = 0x00000010;
+    public static final int TYPE_SIGNED = 0x00000020;
+    public static final int TYPE_UNSIGNED = 0x00000040;
+    public static final int TYPE_FLOAT = 0x00000080;
+    public static final int TYPE_ARRAY = 0x00000100;
+    public static final int TYPE_STRING = 0x00000200;
+    public static final int TYPE_RAW = 0x00000400;
+    
+    // Additional Info
+    public static final int VARIABLE_INFO = 0x00000800;
+    public static final int FIXED_POINT = 0x00001000;
+    public static final int TRACE_INFO = 0x00002000;
+    public static final int TYPE_STRUCT = 0x00004000;
+    
+    // String Coding
+    public static final int STRING_CODING_ASCII = 0x00000000;
+    public static final int STRING_CODING_UTF8 = 0x00008000;
+
+    // Masks
+    public static final int MASK_BASE_TYPE = 0x0000667F0;
+    public static final int MASK_TYPE_LENGTH = 0x0000000F;
+    public static final int MASK_VARIABLE_INFO = 0x00000800;
+    public static final int MASK_FIXED_POINT = 0x00001000;
+    public static final int MASK_STRING_CODING = 0x00038000;
+}
+
+/**
+ * Base class for all Arguments in Verbose Mode
+ */
+abstract class Argument {
+    protected static final int TYPE_INFO_LENGTH = 4;
+    protected final Boolean msbFirst;
+
+    protected Argument(Boolean msbFirst) {
+        this.msbFirst = msbFirst;
+    }
+
+    public abstract byte[] toBytes(Boolean msbFirst);
+    public abstract int getBytesLength();
+    protected abstract String toStr();
+    protected abstract int getTypeInfo();
+    public abstract int getDataPayloadLength();
+    protected abstract byte[] dataPayloadToBytes(Boolean msbFirst);
+
+    @Override
+    public String toString() {
+        return toStr();
+    }
+
+    public static Argument createFromBytes(byte[] data, boolean msbFirst, Charset encoding) {
+        ByteBuffer buffer = ByteBuffer.wrap(data, 0, TYPE_INFO_LENGTH)
+            .order(msbFirst ? ByteOrder.BIG_ENDIAN : ByteOrder.LITTLE_ENDIAN);
+        int typeInfo = buffer.getInt();
+        int typeInfoBase = typeInfo & TypeInfo.MASK_BASE_TYPE;
+        int typeInfoLength = typeInfo & TypeInfo.MASK_TYPE_LENGTH;
+        byte[] payload = Arrays.copyOfRange(data, TYPE_INFO_LENGTH, data.length);
+
+        // Create appropriate argument type based on type info
+        if (typeInfoBase == TypeInfo.TYPE_BOOL) {
+            return ArgumentBool.fromDataPayload(payload, msbFirst);
+        } else if (typeInfoBase == TypeInfo.TYPE_STRING) {
+            boolean isUtf8 = (typeInfo & TypeInfo.MASK_STRING_CODING) == TypeInfo.STRING_CODING_UTF8;
+            return ArgumentString.fromDataPayload(payload, isUtf8, msbFirst, encoding);
+        }
+        // Add additional type handling here...
+        
+        throw new IllegalArgumentException("Unsupported TypeInfo: " + Integer.toBinaryString(typeInfo));
+    }
+}
+
+/**
+ * Base class for numeric arguments
+ */
+abstract class ArgumentNumBase<T> extends Argument {
+    protected final T data;
+
+    protected ArgumentNumBase(T data, Boolean msbFirst) {
+        super(msbFirst);
+        this.data = data;
+    }
+
+    @Override
+    protected String toStr() {
+        return data.toString();
+    }
+}
+
+/**
+ * Boolean argument implementation
+ */
+class ArgumentBool extends ArgumentNumBase<Boolean> {
+    public ArgumentBool(Boolean data, Boolean msbFirst) {
+        super(data, msbFirst);
+    }
+
+    @Override
+    protected int getTypeInfo() {
+        return TypeInfo.TYPE_BOOL | TypeInfo.TYPE_LENGTH_8BIT;
+    }
+
+    @Override
+    public int getDataPayloadLength() {
+        return 1;
+    }
+
+    @Override
+    public byte[] toBytes(Boolean msbFirst) {
+        ByteBuffer buffer = ByteBuffer.allocate(TYPE_INFO_LENGTH + getDataPayloadLength())
+            .order(getByteOrder(msbFirst));
+        buffer.putInt(getTypeInfo());
+        buffer.put(data ? (byte)1 : (byte)0);
+        return buffer.array();
+    }
+
+    @Override
+    protected byte[] dataPayloadToBytes(Boolean msbFirst) {
+        return new byte[] { data ? (byte)1 : (byte)0 };
+    }
+
+    @Override
+    public int getBytesLength() {
+        return TYPE_INFO_LENGTH + getDataPayloadLength();
+    }
+
+    public static ArgumentBool fromDataPayload(byte[] data, boolean msbFirst) {
+        return new ArgumentBool(data[0] != 0, msbFirst);
+    }
+
+    private ByteOrder getByteOrder(Boolean msbFirst) {
+        if (msbFirst != null) {
+            return msbFirst ? ByteOrder.BIG_ENDIAN : ByteOrder.LITTLE_ENDIAN;
+        } else if (this.msbFirst != null) {
+            return this.msbFirst ? ByteOrder.BIG_ENDIAN : ByteOrder.LITTLE_ENDIAN;
+        } else if (DltConstants.MSB_FIRST_DEFAULT != null) {
+            return DltConstants.MSB_FIRST_DEFAULT ? ByteOrder.BIG_ENDIAN : ByteOrder.LITTLE_ENDIAN;
+        }
+        throw new IllegalStateException("Endian is not known");
+    }
+}
+
+/**
+ * String argument implementation
+ */
+class ArgumentString extends Argument {
+    private static final int LENGTH_SIZE = 2;
+    private final String data;
+    private final boolean isUtf8;
+    private final Charset encoding;
+
+    public ArgumentString(String data, boolean isUtf8, Boolean msbFirst, Charset encoding) {
+        super(msbFirst);
+        this.data = data;
+        this.isUtf8 = isUtf8;
+        this.encoding = encoding != null ? encoding : 
+            (isUtf8 ? StandardCharsets.UTF_8 : StandardCharsets.US_ASCII);
+    }
+
+    @Override
+    protected int getTypeInfo() {
+        return TypeInfo.TYPE_STRING | (isUtf8 ? TypeInfo.STRING_CODING_UTF8 : TypeInfo.STRING_CODING_ASCII);
+    }
+
+    @Override
+    public int getDataPayloadLength() {
+        return LENGTH_SIZE + data.getBytes(encoding).length + 1; // +1 for null terminator
+    }
+
+    @Override
+    protected String toStr() {
+        return data;
+    }
+
+    @Override
+    public byte[] toBytes(Boolean msbFirst) {
+        ByteBuffer buffer = ByteBuffer.allocate(TYPE_INFO_LENGTH + getDataPayloadLength())
+            .order(getByteOrder(msbFirst));
+        buffer.putInt(getTypeInfo());
+        buffer.putShort((short)(data.getBytes(encoding).length + 1));
+        buffer.put(data.getBytes(encoding));
+        buffer.put((byte)0); // null terminator
+        return buffer.array();
+    }
+
+    @Override
+    protected byte[] dataPayloadToBytes(Boolean msbFirst) {
+        ByteBuffer buffer = ByteBuffer.allocate(getDataPayloadLength())
+            .order(getByteOrder(msbFirst));
+        buffer.putShort((short)(data.getBytes(encoding).length + 1));
+        buffer.put(data.getBytes(encoding));
+        buffer.put((byte)0);
+        return buffer.array();
+    }
+
+    @Override
+    public int getBytesLength() {
+        return TYPE_INFO_LENGTH + getDataPayloadLength();
+    }
+
+    public static ArgumentString fromDataPayload(byte[] data, boolean isUtf8, boolean msbFirst, Charset encoding) {
+        ByteBuffer buffer = ByteBuffer.wrap(data, 0, LENGTH_SIZE)
+            .order(msbFirst ? ByteOrder.BIG_ENDIAN : ByteOrder.LITTLE_ENDIAN);
+        int length = buffer.getShort();
+        
+        Charset charset = encoding != null ? encoding :
+            (isUtf8 ? StandardCharsets.UTF_8 : StandardCharsets.US_ASCII);
+        
+        String str = new String(Arrays.copyOfRange(data, LENGTH_SIZE, LENGTH_SIZE + length - 1), charset);
+        return new ArgumentString(str, isUtf8, msbFirst, charset);
+    }
+
+    private ByteOrder getByteOrder(Boolean msbFirst) {
+        if (msbFirst != null) {
+            return msbFirst ? ByteOrder.BIG_ENDIAN : ByteOrder.LITTLE_ENDIAN;
+        } else if (this.msbFirst != null) {
+            return this.msbFirst ? ByteOrder.BIG_ENDIAN : ByteOrder.LITTLE_ENDIAN;
+        } else if (DltConstants.MSB_FIRST_DEFAULT != null) {
+            return DltConstants.MSB_FIRST_DEFAULT ? ByteOrder.BIG_ENDIAN : ByteOrder.LITTLE_ENDIAN;
+        }
+        throw new IllegalStateException("Endian is not known");
+    }
+}
+
+/**
+ * Verbose Mode Payload implementation
+ */
+class VerbosePayload extends Payload {
+    private final List<Argument> arguments;
+
+    public VerbosePayload(List<Argument> arguments) {
+        this.arguments = arguments;
+    }
+
+    public static VerbosePayload createFromBytes(byte[] data, boolean msbFirst, int numberOfArguments, Charset encoding) {
+        List<Argument> args = new ArrayList<>();
+        int offset = 0;
+        
+        for (int i = 0; i < numberOfArguments; i++) {
+            Argument arg = Argument.createFromBytes(
+                Arrays.copyOfRange(data, offset, data.length),
+                msbFirst,
+                encoding
+            );
+            args.add(arg);
+            offset += arg.getBytesLength();
+        }
+        
+        return new VerbosePayload(args);
+    }
+
+    @Override
+    public byte[] toBytes(Boolean msbFirst) {
+        int totalLength = getBytesLength();
+        ByteBuffer buffer = ByteBuffer.allocate(totalLength);
+        
+        for (Argument arg : arguments) {
+            buffer.put(arg.toBytes(msbFirst));
+        }
+        
+        return buffer.array();
+    }
+
+    @Override
+    public int getBytesLength() {
+        int length = 0;
+        for (Argument arg : arguments) {
+            length += arg.getBytesLength();
+        }
+        return length;
+    }
+
+    @Override
+    protected String toStr() {
+        return String.join(" ", arguments.stream()
+            .map(Argument::toString)
+            .toArray(String[]::new));
+    }
+}

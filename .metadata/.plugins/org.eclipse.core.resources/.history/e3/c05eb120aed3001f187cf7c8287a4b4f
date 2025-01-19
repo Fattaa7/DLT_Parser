@@ -1,0 +1,58 @@
+package viewer;
+
+import java.io.BufferedReader;
+import java.io.File;           // Import java.io.File
+import java.io.FileInputStream;
+import java.io.FileReader;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+
+public class Viewer {
+
+	public static void main(String[] args) {
+		 // Path to the DLT file
+        String filePath = "C:\\Users\\ahmed\\Downloads\\delulu.dlt";
+        
+        try (FileInputStream fis = new FileInputStream(filePath)) {
+            byte[] buffer = new byte[16]; // Read in 16 bytes for the Base Header initially
+            while (fis.read(buffer) != -1) {
+                parseBaseHeader(buffer);
+            }
+        } catch (IOException e) {
+            System.err.println("Error reading DLT file: " + e.getMessage());
+        }
+    }
+
+    private static void parseBaseHeader(byte[] data) {
+        if (data.length < 4) {
+            System.out.println("Insufficient data for Base Header");
+            return;
+        }
+
+        ByteBuffer buffer = ByteBuffer.wrap(data);
+        buffer.order(ByteOrder.BIG_ENDIAN);
+        
+        int header = buffer.getInt();
+        byte counter = buffer.get();
+        char msgLen = buffer.getChar();
+
+        int CNTI = header & 0b11;
+        int WEID = header & 0b100;
+        int WACID = header & 0b1000;
+        int WSID = header & 0b10000;
+        int VERS = header & 0b11100000;
+        int WSFLN = header & 0b100000000;
+        int WTGS = header & 0b1000000000;
+        int WPVL = header & 0b1000000000;
+        int WSGM = header & 0b1000000000;
+
+
+
+    }
+
+ 
+    
+
+    
+}

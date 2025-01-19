@@ -1,0 +1,141 @@
+package viewer;
+
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.util.Optional;
+
+import viewer.StandardHeader.MessageBusInfo;
+import viewer.StandardHeader.MessageControlInfo;
+import viewer.StandardHeader.MessageLogInfo;
+import viewer.StandardHeader.MessageTraceInfo;
+
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+
+public class ExtendedHeader {
+    // Length of the bytes data
+    public static final int DATA_LENGTH = 10;
+
+    // Bit masks to get/set values in Message Info
+    public static final int VERBOSE_MASK = 0b00000001;
+    public static final int MESSAGE_TYPE_MASK = 0b00001110;
+    public static final int MESSAGE_TYPE_INFO_MASK = 0b11110000;
+
+    private static final int MESSAGE_TYPE_SHIFT = 1;
+    private static final int MESSAGE_TYPE_INFO_SHIFT = 4;
+
+    // Struct format for pack/unpack
+    // In Java, we can use ByteBuffer instead of struct.
+    // We will manually handle packing and unpacking operations.
+
+    private boolean verbose;
+    private int messageType;
+    private int messageTypeInfo;
+    private int numberOfArguments;
+    private String applicationId;
+    private String contextId;
+
+    // Constructor
+    public ExtendedHeader(boolean verbose, int messageType, int messageTypeInfo,
+                          int numberOfArguments, String applicationId, String contextId) {
+        this.verbose = verbose;
+        this.messageType = messageType;
+        this.messageTypeInfo = messageTypeInfo;
+        this.numberOfArguments = numberOfArguments;
+        this.applicationId = applicationId;
+        this.contextId = contextId;
+    }
+
+    @Override
+    public String toString() {
+        return "ExtendedHeader{" +
+                "verbose=" + verbose +
+                ", messageType=" + messageType +
+                ", messageTypeInfo=" + messageTypeInfo +
+                ", numberOfArguments=" + numberOfArguments +
+                ", applicationId='" + applicationId + '\'' +
+                ", contextId='" + contextId + '\'' +
+                '}';
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        ExtendedHeader that = (ExtendedHeader) o;
+        return verbose == that.verbose &&
+                messageType == that.messageType &&
+                messageTypeInfo == that.messageTypeInfo &&
+                numberOfArguments == that.numberOfArguments &&
+                applicationId.equals(that.applicationId) &&
+                contextId.equals(that.contextId);
+    }
+
+    // Method to create ExtendedHeader object from bytes
+    public static ExtendedHeader createFromBytes(byte[] data) throws IllegalArgumentException {
+        int dataLength = data.length;
+        if (dataLength < DATA_LENGTH) {
+            throw new IllegalArgumentException("Unexpected length of the data: " + dataLength + " / Extended Header must be " + DATA_LENGTH + " or more");
+        }
+
+        ByteBuffer byteBuffer = ByteBuffer.wrap(data);
+
+        int msin = byteBuffer.get(); // first byte
+        boolean verb = (msin & VERBOSE_MASK) != 0;
+        int mstp = (msin & MESSAGE_TYPE_MASK) >> MESSAGE_TYPE_SHIFT;
+        int mtin = (msin & MESSAGE_TYPE_INFO_MASK) >> MESSAGE_TYPE_INFO_SHIFT;
+        int noar = byteBuffer.get();
+        byte[] apidBytes = new byte[4];
+        byte[] ctidBytes = new byte[4];
+        byteBuffer.get(apidBytes);
+        byteBuffer.get(ctidBytes);
+
+        String apid = new String(apidBytes, StandardCharsets.US_ASCII).trim();
+        String ctid = new String(ctidBytes, StandardCharsets.US_ASCII).trim();
+
+        return new ExtendedHeader(verb, mstp, mtin, noar, apid, ctid);
+    }
+
+    // Convert to data bytes
+    public byte[] toBytes() {
+        int msin = 0;
+        if (verbose) {
+            msin |= VERBOSE_MASK;
+        }
+        msin |= (messageType << MESSAGE_TYPE_SHIFT) & MESSAGE_TYPE_MASK;
+        msin |= (messageTypeInfo << MESSAGE_TYPE_INFO_SHIFT) & MESSAGE_TYPE_INFO_MASK;
+
+        byte[] apidBytes = applicationId.getBytes(StandardCharsets.US_ASCII);
+        byte[] ctidBytes = contextId.getBytes(StandardCharsets.US_ASCII);
+
+        ByteBuffer byteBuffer = ByteBuffer.allocate(DATA_LENGTH);
+        byteBuffer.put((byte) msin);
+        byteBuffer.put((byte) numberOfArguments);
+        byteBuffer.put(apidBytes);
+        byteBuffer.put(ctidBytes);
+
+        return byteBuffer.array();
+    }
+
+    public int getBytesLength() {
+        return DATA_LENGTH;
+    }
+
+    // Cast the messageTypeInfo to specific classes (properties for different types of MessageLogInfo, MessageTraceInfo, etc.)
+
+    public MessageLogInfo getMessageLogInfo() {
+        return new MessageLogInfo(messageTypeInfo); // Replace with appropriate conversion/casting logic
+    }
+
+    public MessageTraceInfo getMessageTraceInfo() {
+        return (MessageTraceInfo) messageTypeInfo; // Replace with appropriate conversion/casting logic
+    }
+
+    public MessageBusInfo getMessageBusInfo() {
+        return (MessageBusInfo) messageTypeInfo; // Replace with appropriate conversion/casting logic
+    }
+
+    public MessageControlInfo getMessageControlInfo() {
+        return (MessageControlInfo) messageTypeInfo; // Replace with appropriate conversion/casting logic
+    }
+}

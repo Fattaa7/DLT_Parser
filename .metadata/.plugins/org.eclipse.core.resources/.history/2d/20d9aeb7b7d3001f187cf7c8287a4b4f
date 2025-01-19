@@ -1,0 +1,79 @@
+package viewer;
+
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+
+public class ExtendedHeader {
+    public static final int DATA_LENGTH = 10;
+
+    private static final byte VERBOSE_MASK = 0b00000001;
+    private static final byte MESSAGE_TYPE_MASK = 0b00001110;
+    private static final byte MESSAGE_TYPE_INFO_MASK = (byte) 0b11110000;
+
+    private static final int MESSAGE_TYPE_SHIFT = 1;
+    private static final int MESSAGE_TYPE_INFO_SHIFT = 4;
+
+    private final boolean verbose;
+    private final MessageType messageType;
+    private final int messageTypeInfo;
+    private final int numberOfArguments;
+    private final String applicationId;
+    private final String contextId;
+
+    public ExtendedHeader(boolean verbose, MessageType messageType,
+                         int messageTypeInfo, int numberOfArguments,
+                         String applicationId, String contextId) {
+        this.verbose = verbose;
+        this.messageType = messageType;
+        this.messageTypeInfo = messageTypeInfo;
+        this.numberOfArguments = numberOfArguments;
+        this.applicationId = applicationId;
+        this.contextId = contextId;
+    }
+
+    public static ExtendedHeader createFromBytes(byte[] data) {
+        if (data.length < DATA_LENGTH) {
+            throw new IllegalArgumentException(
+                String.format("Unexpected length of the data: %d / Extended Header must be %d or more",
+                            data.length, DATA_LENGTH));
+        }
+
+        ByteBuffer buffer = ByteBuffer.wrap(data);
+        byte msin = buffer.get();
+        boolean verb = (msin & VERBOSE_MASK) != 0;
+        int mstp = (msin & MESSAGE_TYPE_MASK) >> MESSAGE_TYPE_SHIFT;
+        int mtin = (msin & MESSAGE_TYPE_INFO_MASK) >> MESSAGE_TYPE_INFO_SHIFT;
+        
+        int noar = buffer.get() & 0xFF;
+        
+        byte[] apidBytes = new byte[4];
+        buffer.get(apidBytes);
+        String apid = StandardHeader.asciiDecode(apidBytes);
+        
+        byte[] ctidBytes = new byte[4];
+        buffer.get(ctidBytes);
+        String ctid = StandardHeader.asciiDecode(ctidBytes);
+
+        return new ExtendedHeader(verb, MessageType.values()[mstp], mtin, noar, apid, ctid);
+    }
+
+    public byte[] toBytes() {
+        ByteBuffer buffer = ByteBuffer.allocate(DATA_LENGTH);
+        
+        byte msin = 0;
+        if (verbose) msin |= VERBOSE_MASK;
+        msin |= (messageType.getValue() << MESSAGE_TYPE_SHIFT) & MESSAGE_TYPE_MASK;
+        msin |= (messageTypeInfo << MESSAGE_TYPE_INFO_SHIFT) & MESSAGE_TYPE_INFO_MASK;
+        
+        buffer.put(msin);
+        buffer.put((byte) numberOfArguments);
+        buffer.put(StandardHeader.asciiEncode(applicationId, 4));
+        buffer.put(StandardHeader.asciiEncode(contextId, 4));
+        
+        return buffer.array();
+    }
+
+    public int getBytesLength() {
+        return DATA_LENGTH;
+    }
+}

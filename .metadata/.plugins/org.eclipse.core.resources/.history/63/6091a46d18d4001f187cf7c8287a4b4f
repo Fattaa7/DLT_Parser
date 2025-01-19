@@ -1,0 +1,211 @@
+package viewer;
+
+import java.nio.ByteBuffer;
+import java.util.List;
+import java.util.Optional;
+
+import viewer.StandardHeader.MessageType;
+import viewer.StandardHeader.MessageTypeInfo;
+
+public class DltMessage {
+    private StorageHeader strHeader;
+    private StandardHeader stdHeader;
+    private ExtendedHeader extHeader;
+    private Payload payload;
+
+    private static final String[] _MESSAGE_TYPE_STR = {
+            "log", "app_trace", "nw_trace", "control"
+    };
+
+    private static final String[] _MESSAGE_LOG_INFO_STR = {
+            "fatal", "error", "warn", "info", "debug", "verbose"
+    };
+
+    private static final String[] _MESSAGE_TRACE_INFO_STR = {
+            "variable", "func_in", "func_out", "state", "vfb"
+    };
+
+    private static final String[] _MESSAGE_BUS_INFO_STR = {
+            "ipc", "can", "flexray", "most"
+    };
+
+    private static final String[] _MESSAGE_CONTROL_INFO_STR = {
+            "request", "response", "time"
+    };
+
+    public DltMessage(StorageHeader strHeader, StandardHeader stdHeader, ExtendedHeader extHeader, Payload payload) {
+        this.strHeader = strHeader;
+        this.stdHeader = stdHeader;
+        this.extHeader = extHeader;
+        this.payload = payload;
+    }
+
+    @Override
+    public boolean equals(Object other) {
+        if (this == other) return true;
+        if (other == null || getClass() != other.getClass()) return false;
+
+        DltMessage that = (DltMessage) other;
+
+        return (this.strHeader.equals(that.strHeader) &&
+                this.stdHeader.equals(that.stdHeader) &&
+                this.extHeader.equals(that.extHeader) &&
+                this.payload.equals(that.payload));
+    }
+
+    @Override
+    public String toString() {
+        StringBuilder ret = new StringBuilder();
+        if (strHeader != null) {
+            ret.append(strHeader.getTime());
+        }
+
+        if (stdHeader.timestamp != null) {
+            ret.append(stdHeader.timestamp / 10000).append(".").append(String.format("%04d", (stdHeader.timestamp % 10000)));
+        }
+        
+        ret.append(stdHeader.messageCounter);
+
+        if (stdHeader.ecuId != null) {
+            ret.append(stdHeader.ecuId);
+        } else if (strHeader != null) {
+            ret.append(strHeader.ecuId);
+        }
+
+        if (extHeader != null) {
+            ret.append(extHeader.applicationId).append(extHeader.contextId);
+        }
+
+        if (stdHeader.sessionId != null) {
+            ret.append(stdHeader.sessionId);
+        }
+
+        if (extHeader != null) {
+            ret.append(_MESSAGE_TYPE_STR[extHeader.messageType)]);
+            if (extHeader.messageType == MessageType.DLT_TYPE_LOG.getValue()) {
+                ret.append(_MESSAGE_LOG_INFO_STR[extHeader.getMessageLogInfo().getValue()]);
+            } else if (extHeader.messageType == MessageType.DLT_TYPE_APP_TRACE.getValue()) {
+                ret.append(_MESSAGE_TRACE_INFO_STR[extHeader.getMessageTraceInfo().getValue()]);
+            } else if (extHeader.messageType == MessageType.DLT_TYPE_NW_TRACE.getValue()) {
+                ret.append(_MESSAGE_BUS_INFO_STR[extHeader.getMessageBusInfo().getValue()]);
+            } else if (extHeader.messageType == MessageType.DLT_TYPE_CONTROL.getValue()) {
+                ret.append(_MESSAGE_CONTROL_INFO_STR[extHeader.getMessageControlInfo().getValue()]);
+            }
+        }
+
+        if (extHeader != null && extHeader.verbose) {
+            ret.append(" verbose");
+        } else {
+            ret.append(" non-verbose");
+        }
+
+        if (extHeader != null) {
+            ret.append(extHeader.numberOfArguments);
+        }
+
+        if (payload != null) {
+            ret.append(payload);
+        }
+
+        return ret.toString();
+    }
+
+    public static DltMessage createNonVerboseMessage(int messageId, byte[] nonStaticData,
+                                                     ExtendedHeader extHeader, Optional<Integer> timestamp,
+                                                     Optional<Integer> sessionId, Optional<String> ecuId,
+                                                     int messageCounter, int versionNumber,
+                                                     Optional<Boolean> msbFirst, StorageHeader strHeader) {
+        NonVerbosePayload payload = new NonVerbosePayload(messageId, nonStaticData, msbFirst);
+        StandardHeader stdHeader = createStandardHeader(payload.getBytesLength(),
+                extHeader, timestamp, sessionId, ecuId, messageCounter, versionNumber, msbFirst.get());
+        return new DltMessage(strHeader, stdHeader, extHeader, payload);
+    }
+
+    public static DltMessage createVerboseMessage(List<Argument> arguments, MessageType messageType,
+                                                  int messageInfo, String applicationId,
+                                                  String contextId, Optional<Integer> timestamp, Optional<Integer> sessionId,
+                                                  Optional<String> ecuId, int messageCounter, int versionNumber,
+                                                  Optional<Boolean> msbFirst, StorageHeader strHeader) {
+        VerbosePayload payload = new VerbosePayload(arguments);
+        ExtendedHeader extHeader = new ExtendedHeader(true, messageType.getValue(), messageInfo, arguments.size(),
+                applicationId, contextId);
+        StandardHeader stdHeader = createStandardHeader(payload.getBytesLength(),
+                extHeader, timestamp, sessionId, ecuId, messageCounter, versionNumber, msbFirst.get());
+        return new DltMessage(strHeader, stdHeader, extHeader, payload);
+    }
+
+    private static StandardHeader createStandardHeader(int payloadLength, ExtendedHeader extHeader,
+    		Optional<Integer> timestamp, Optional<Integer> sessionId,
+                                                       Optional<String> ecuId, int messageCounter, int versionNumber,
+                                                       boolean msbFirst) {
+        boolean useExtendedHeader = extHeader != null;
+        int extHeaderLength = useExtendedHeader ? extHeader.getBytesLength() : 0;
+        StandardHeader stdHeader = new StandardHeader(useExtendedHeader, msbFirst, versionNumber,
+                messageCounter, 0, ecuId, sessionId, timestamp);
+        stdHeader.setLength(payloadLength + extHeaderLength + stdHeader.getBytesLength());
+        return stdHeader;
+    }
+
+    public static DltMessage createFromBytes(byte[] data, boolean withStorageHeader, String encoding) throws Exception {
+        int seekPos = 0;
+        StorageHeader strHeader = null;
+        int strHeaderLength = 0;
+        if (withStorageHeader) {
+            strHeader = StorageHeader.createFromBytes(data);
+            seekPos += strHeader.getBytesLength();
+            strHeaderLength = strHeader.getBytesLength();
+        }
+        StandardHeader stdHeader = StandardHeader.createFromBytes(data, seekPos);
+        seekPos += stdHeader.getBytesLength();
+        ExtendedHeader extHeader = null;
+        int extHeaderLength = 0;
+        if (stdHeader.isUseExtendedHeader()) {
+            extHeader = ExtendedHeader.createFromBytes(data, seekPos);
+            extHeaderLength = extHeader.getBytesLength();
+            seekPos += extHeader.getBytesLength();
+        }
+        Payload payload = null;
+        if (stdHeader.getLength() > stdHeader.getBytesLength() + extHeaderLength) {
+            if (extHeader != null && extHeader.isVerbose()) {
+                payload = VerbosePayload.createFromBytes(data, seekPos, stdHeader.isMsbFirst(),
+                        extHeader.getNumberOfArguments(), encoding);
+            } else {
+                payload = NonVerbosePayload.createFromBytes(data, seekPos, stdHeader.isMsbFirst());
+            }
+        }
+        return new DltMessage(strHeader, stdHeader, extHeader, payload);
+    }
+
+    public byte[] toBytes() {
+        ByteBuffer buffer = ByteBuffer.allocate(1024); // Arbitrary large size, should adjust based on actual size
+        if (strHeader != null) {
+            buffer.put(strHeader.toBytes());
+        }
+        buffer.put(stdHeader.toBytes());
+        if (extHeader != null) {
+            buffer.put(extHeader.toBytes());
+        }
+        if (payload != null) {
+            buffer.put(payload.toBytes(stdHeader.isMsbFirst()));
+        }
+        return buffer.array();
+    }
+
+    public boolean isVerbose() {
+        return extHeader != null && extHeader.isVerbose();
+    }
+
+    public NonVerbosePayload getNonVerbosePayload() {
+        if (payload instanceof NonVerbosePayload) {
+            return (NonVerbosePayload) payload;
+        }
+        throw new IllegalStateException("This message is not in non-verbose mode.");
+    }
+
+    public VerbosePayload getVerbosePayload() {
+        if (payload instanceof VerbosePayload) {
+            return (VerbosePayload) payload;
+        }
+        throw new IllegalStateException("This message is not in verbose mode.");
+    }
+}

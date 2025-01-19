@@ -1,0 +1,100 @@
+package viewer;
+
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+
+public class ExtendedHeader {
+
+    // Constants
+    public static final int DATA_LENGTH = 10; // Fixed length of the Extended Header
+
+    // Bit masks for Message Info
+    private static final int VERBOSE_MASK = 0b00000001;
+    private static final int MESSAGE_TYPE_MASK = 0b00001110;
+    private static final int MESSAGE_TYPE_INFO_MASK = 0b11110000;
+
+    private static final int MESSAGE_TYPE_SHIFT = 1;
+    private static final int MESSAGE_TYPE_INFO_SHIFT = 4;
+
+    // Fields
+    private final boolean verbose;
+    private final int messageType;
+    private final int messageTypeInfo;
+    private final int numberOfArguments;
+    private final String applicationId;
+    private final String contextId;
+
+    public ExtendedHeader(
+        boolean verbose,
+        int messageType,
+        int messageTypeInfo,
+        int numberOfArguments,
+        String applicationId,
+        String contextId
+    ) {
+        this.verbose = verbose;
+        this.messageType = messageType;
+        this.messageTypeInfo = messageTypeInfo;
+        this.numberOfArguments = numberOfArguments;
+        this.applicationId = applicationId;
+        this.contextId = contextId;
+    }
+
+    public static ExtendedHeader createFromBytes(byte[] data) {
+        if (data.length < DATA_LENGTH) {
+            throw new IllegalArgumentException(
+                "Data length must be at least " + DATA_LENGTH
+            );
+        }
+
+        ByteBuffer buffer = ByteBuffer.wrap(data).order(ByteOrder.BIG_ENDIAN);
+
+        // Parse fields
+        byte messageInfo = buffer.get();
+        boolean verbose = (messageInfo & VERBOSE_MASK) != 0;
+        int messageType = (messageInfo & MESSAGE_TYPE_MASK) >> MESSAGE_TYPE_SHIFT;
+        int messageTypeInfo = (messageInfo & MESSAGE_TYPE_INFO_MASK) >> MESSAGE_TYPE_INFO_SHIFT;
+        int numberOfArguments = Byte.toUnsignedInt(buffer.get());
+
+        byte[] applicationIdBytes = new byte[4];
+        buffer.get(applicationIdBytes);
+        String applicationId = new String(applicationIdBytes).trim();
+
+        byte[] contextIdBytes = new byte[4];
+        buffer.get(contextIdBytes);
+        String contextId = new String(contextIdBytes).trim();
+
+        return new ExtendedHeader(
+            verbose, messageType, messageTypeInfo, numberOfArguments, applicationId, contextId
+        );
+    }
+
+    public byte[] toBytes() {
+        ByteBuffer buffer = ByteBuffer.allocate(DATA_LENGTH).order(ByteOrder.BIG_ENDIAN);
+
+        // Pack the message info
+        int messageInfo = 0;
+        if (verbose) messageInfo |= VERBOSE_MASK;
+        messageInfo |= (messageType << MESSAGE_TYPE_SHIFT) & MESSAGE_TYPE_MASK;
+        messageInfo |= (messageTypeInfo << MESSAGE_TYPE_INFO_SHIFT) & MESSAGE_TYPE_INFO_MASK;
+
+        buffer.put((byte) messageInfo);
+        buffer.put((byte) numberOfArguments);
+        buffer.put(applicationId.getBytes());
+        buffer.put(contextId.getBytes());
+
+        return buffer.array();
+    }
+
+    @Override
+    public String toString() {
+        return "ExtendedHeader{" +
+               "verbose=" + verbose +
+               ", messageType=" + messageType +
+               ", messageTypeInfo=" + messageTypeInfo +
+               ", numberOfArguments=" + numberOfArguments +
+               ", applicationId='" + applicationId + '\'' +
+               ", contextId='" + contextId + '\'' +
+               '}';
+    }
+}

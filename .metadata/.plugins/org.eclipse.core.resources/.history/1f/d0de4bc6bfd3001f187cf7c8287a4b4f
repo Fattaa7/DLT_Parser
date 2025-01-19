@@ -1,0 +1,255 @@
+package viewer;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+
+abstract class Argument {
+    protected static final int TYPE_INFO_LENGTH = 4;
+    protected Boolean msbFirst;
+
+    public Argument(Boolean msbFirst) {
+        this.msbFirst = msbFirst;
+    }
+
+    @Override
+    public String toString() {
+        return _toStr();
+    }
+
+    protected abstract int getTypeInfo();
+    public abstract byte[] toBytes(Boolean msbFirst);
+    public abstract String _toStr();
+    public abstract int getDataPayloadLength();
+    public abstract byte[] dataPayloadToBytes(Boolean msbFirst);
+
+    public static Argument createFromBytes(byte[] data, Boolean msbFirst, String encoding) {
+        ByteOrder byteOrder = msbFirst ? ByteOrder.BIG_ENDIAN : ByteOrder.LITTLE_ENDIAN;
+        ByteBuffer buffer = ByteBuffer.wrap(data).order(byteOrder);
+        int typeInfo = buffer.getInt();
+        int typeInfoBase = typeInfo & BitMasks.MASK_BASE_TYPE;
+        Argument argument = null;
+
+        if (typeInfoBase == TypeInfo.TYPE_BOOL.getValue()) {
+            argument = ArgumentBool.fromDataPayload(getDataPayload(data), msbFirst);
+        } else if (typeInfoBase == TypeInfo.TYPE_SIGNED.getValue()) {
+            int typeInfoLength = typeInfo & BitMasks.MASK_TYPE_LENGTH;
+            switch (typeInfoLength) {
+                case TypeInfo.TYPE_LENGTH_8BIT.getValue():
+                    argument = ArgumentSInt8.fromDataPayload(getDataPayload(data), msbFirst);
+                    break;
+                case TypeInfo.TYPE_LENGTH_16BIT.getValue():
+                    argument = ArgumentSInt16.fromDataPayload(getDataPayload(data), msbFirst);
+                    break;
+                case TypeInfo.TYPE_LENGTH_32BIT.getValue():
+                    argument = ArgumentSInt32.fromDataPayload(getDataPayload(data), msbFirst);
+                    break;
+                case TypeInfo.TYPE_LENGTH_64BIT.getValue():
+                    argument = ArgumentSInt64.fromDataPayload(getDataPayload(data), msbFirst);
+                    break;
+                default:
+                    throw new IllegalArgumentException("Unsupported TypeInfo: " + Integer.toBinaryString(typeInfo));
+            }
+        } else if (typeInfoBase == TypeInfo.TYPE_UNSIGNED.getValue()) {
+            int typeInfoLength = typeInfo & Mask.TYPE_LENGTH;
+            switch (typeInfoLength) {
+                case TypeInfo.TYPE_LENGTH_8BIT.getValue():
+                    argument = ArgumentUInt8.fromDataPayload(getDataPayload(data), msbFirst);
+                    break;
+                case TypeInfo.TYPE_LENGTH_16BIT.getValue():
+                    argument = ArgumentUInt16.fromDataPayload(getDataPayload(data), msbFirst);
+                    break;
+                case TypeInfo.TYPE_LENGTH_32BIT.getValue():
+                    argument = ArgumentUInt32.fromDataPayload(getDataPayload(data), msbFirst);
+                    break;
+                case TypeInfo.TYPE_LENGTH_64BIT.getValue():
+                    argument = ArgumentUInt64.fromDataPayload(getDataPayload(data), msbFirst);
+                    break;
+                default:
+                    throw new IllegalArgumentException("Unsupported TypeInfo: " + Integer.toBinaryString(typeInfo));
+            }
+        } else if (typeInfoBase == TypeInfo.TYPE_FLOAT.getValue()) {
+            int typeInfoLength = typeInfo & Mask.TYPE_LENGTH;
+            switch (typeInfoLength) {
+                case TypeInfo.TYPE_LENGTH_32BIT.getValue():
+                    argument = ArgumentFloat32.fromDataPayload(getDataPayload(data), msbFirst);
+                    break;
+                case TypeInfo.TYPE_LENGTH_64BIT.getValue():
+                    argument = ArgumentFloat64.fromDataPayload(getDataPayload(data), msbFirst);
+                    break;
+                default:
+                    throw new IllegalArgumentException("Unsupported TypeInfo: " + Integer.toBinaryString(typeInfo));
+            }
+        } else if (typeInfoBase == TypeInfo.TYPE_STRING.getValue()) {
+            int stringCoding = typeInfo & Mask.STRING_CODING;
+            if (stringCoding == TypeInfo.STRING_CODING_ASCII.getValue()) {
+                argument = ArgumentString.fromDataPayload(getDataPayload(data), false, msbFirst, encoding);
+            } else if (stringCoding == TypeInfo.STRING_CODING_UTF8.getValue()) {
+                argument = ArgumentString.fromDataPayload(getDataPayload(data), true, msbFirst);
+            } else {
+                throw new IllegalArgumentException("Unsupported String Coding: " + Integer.toBinaryString(typeInfo));
+            }
+        } else if (typeInfoBase == TypeInfo.TYPE_RAW.getValue()) {
+            argument = ArgumentRaw.fromDataPayload(getDataPayload(data), msbFirst);
+        }
+
+        if (argument == null) {
+            throw new IllegalArgumentException("Unsupported TypeInfo: " + Integer.toBinaryString(typeInfo));
+        }
+        return argument;
+    }
+
+    private static byte[] getDataPayload(byte[] data) {
+        byte[] payload = new byte[data.length - TYPE_INFO_LENGTH];
+        System.arraycopy(data, TYPE_INFO_LENGTH, payload, 0, payload.length);
+        return payload;
+    }
+}
+
+class ArgumentNumBase extends Argument {
+    protected Object data;
+
+    public ArgumentNumBase(Object data, Boolean msbFirst) {
+        super(msbFirst);
+        this.data = data;
+    }
+
+    @Override
+    public int getDataPayloadLength() {
+        return 0; // Default, override if necessary
+    }
+
+    @Override
+    public byte[] dataPayloadToBytes(Boolean msbFirst) {
+        return new byte[0]; // Default, override if necessary
+    }
+}
+
+class ArgumentBool extends ArgumentNumBase {
+    public ArgumentBool(Boolean msbFirst) {
+        super(null, msbFirst); // null data as placeholder
+    }
+
+    @Override
+    public int getTypeInfo() {
+        return TypeInfo.TYPE_BOOL.getValue() | TypeInfo.TYPE_LENGTH_8BIT.getValue();
+    }
+
+    @Override
+    public byte[] toBytes(Boolean msbFirst) {
+        ByteBuffer buffer = ByteBuffer.allocate(1).order(msbFirst ? ByteOrder.BIG_ENDIAN : ByteOrder.LITTLE_ENDIAN);
+        buffer.put((byte) ((data == null) ? 0 : 1));
+        return buffer.array();
+    }
+
+    public static ArgumentBool fromDataPayload(byte[] dataPayload, Boolean msbFirst) {
+        boolean value = dataPayload.length > 0 && dataPayload[0] != 0;
+        ArgumentBool argument = new ArgumentBool(msbFirst);
+        argument.data = value;
+        return argument;
+    }
+
+    @Override
+    public String _toStr() {
+        return data != null ? data.toString() : "null";
+    }
+}
+
+// Implement other argument types (ArgumentSInt8, ArgumentSInt16, ArgumentSInt32, etc.)
+
+class ArgumentSInt8 extends ArgumentNumBase {
+    public ArgumentSInt8(Boolean msbFirst) {
+        super(null, msbFirst);
+    }
+
+    @Override
+    public int getTypeInfo() {
+        return TypeInfo.TYPE_SIGNED.getValue() | TypeInfo.TYPE_LENGTH_8BIT.getValue();
+    }
+
+    @Override
+    public byte[] toBytes(Boolean msbFirst) {
+        ByteBuffer buffer = ByteBuffer.allocate(1).order(msbFirst ? ByteOrder.BIG_ENDIAN : ByteOrder.LITTLE_ENDIAN);
+        buffer.put((byte) data);
+        return buffer.array();
+    }
+
+    public static ArgumentSInt8 fromDataPayload(byte[] dataPayload, Boolean msbFirst) {
+        ArgumentSInt8 argument = new ArgumentSInt8(msbFirst);
+        argument.data = dataPayload[0];
+        return argument;
+    }
+
+    @Override
+    public String _toStr() {
+        return data.toString();
+    }
+}
+
+// Follow the same pattern for other types: ArgumentSInt16, ArgumentSInt32, ArgumentSInt64, ArgumentUInt8, ArgumentUInt16, ArgumentUInt32, ArgumentUInt64, ArgumentFloat32, ArgumentFloat64, ArgumentString, ArgumentRaw
+
+class ArgumentString extends Argument {
+    protected String data;
+
+    public ArgumentString(Boolean msbFirst, String data) {
+        super(msbFirst);
+        this.data = data;
+    }
+
+    @Override
+    public int getTypeInfo() {
+        return TypeInfo.TYPE_STRING | TypeInfo.STRING_CODING_UTF8;
+    }
+
+    @Override
+    public byte[] toBytes(Boolean msbFirst) {
+        byte[] dataBytes = data.getBytes(StandardCharsets.UTF_8);
+        ByteBuffer buffer = ByteBuffer.allocate(4 + dataBytes.length).order(msbFirst ? ByteOrder.BIG_ENDIAN : ByteOrder.LITTLE_ENDIAN);
+        buffer.putInt(dataBytes.length);
+        buffer.put(dataBytes);
+        return buffer.array();
+    }
+
+    public static ArgumentString fromDataPayload(byte[] dataPayload, Boolean msbFirst) {
+        ByteBuffer buffer = ByteBuffer.wrap(dataPayload).order(msbFirst ? ByteOrder.BIG_ENDIAN : ByteOrder.LITTLE_ENDIAN);
+        int length = buffer.getInt();
+        byte[] stringBytes = new byte[length];
+        buffer.get(stringBytes);
+        return new ArgumentString(msbFirst, new String(stringBytes, StandardCharsets.UTF_8));
+    }
+
+    @Override
+    public String _toStr() {
+        return data;
+    }
+}
+
+// Raw Argument - placeholder for raw bytes.
+class ArgumentRaw extends Argument {
+    private byte[] data;
+
+    public ArgumentRaw(Boolean msbFirst, byte[] data) {
+        super(msbFirst);
+        this.data = data;
+    }
+
+    @Override
+    public int getTypeInfo() {
+        return TypeInfo.TYPE_RAW;
+    }
+
+    @Override
+    public byte[] toBytes(Boolean msbFirst) {
+        return data;  // Directly return raw data
+    }
+
+    public static ArgumentRaw fromDataPayload(byte[] dataPayload, Boolean msbFirst) {
+        return new ArgumentRaw(msbFirst, dataPayload);
+    }
+
+    @Override
+    public String _toStr() {
+        return Arrays.toString(data);
+    }
+}
+
